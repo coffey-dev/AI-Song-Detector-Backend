@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Music Detector - Visualizador</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover {
+            background: #e9ecef;
+            border-color: #764ba2;
+        }
+        .upload-area.dragging {
+            background: #dee2e6;
+            border-color: #764ba2;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 10px 5px;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .loading {
+            text-align: center;
+            display: none;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .result {
+            margin-top: 30px;
+            display: none;
+        }
+        .result img {
+            width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .analysis-data {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .metric:last-child {
+            border-bottom: none;
+        }
+        .metric-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        .metric-value {
+            color: #667eea;
+            font-family: monospace;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 AI Music Detector</h1>
+        <p class="subtitle">Visualizador de Análisis Espectral</p>
+
+        <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+            <p style="font-size: 48px; margin: 0;">📁</p>
+            <p style="font-size: 18px; margin: 10px 0;">Arrastra un archivo de audio aquí</p>
+            <p style="color: #666; margin: 5px 0;">o haz clic para seleccionar</p>
+            <p style="color: #999; font-size: 14px; margin-top: 15px;">
+                Formatos: MP3, WAV, OGG, M4A, FLAC, AAC (Máx: 50MB)
+            </p>
+            <input type="file" id="fileInput" accept="audio/*">
+        </div>
+
+        <div style="text-align: center;">
+            <button id="analyzeBtn" onclick="analyzeAudio()" disabled>🔬 Analizar y Visualizar</button>
+            <button onclick="location.reload()">🔄 Limpiar</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Generando visualización espectral...</p>
+            <p style="color: #666; font-size: 14px;">Esto puede tomar unos segundos</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="result" id="result">
+            <h2>📊 Resultados del Análisis</h2>
+            <img id="resultImage" alt="Análisis Espectral">
+
+            <div class="analysis-data" id="analysisData"></div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        const API_URL = 'http://localhost:5000/api/visualize';
+
+        const fileInput = document.getElementById('fileInput');
+        const uploadArea = document.getElementById('uploadArea');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loading = document.getElementById('loading');
+        const result = document.getElementById('result');
+        const error = document.getElementById('error');
+
+        // Manejar selección de archivo
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                uploadArea.innerHTML = `
+                    <p style="font-size: 48px; margin: 0;">✅</p>
+                    <p style="font-size: 18px; margin: 10px 0;">${selectedFile.name}</p>
+                    <p style="color: #666;">${(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                `;
+                analyzeBtn.disabled = false;
+            }
+        });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragging');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragging');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragging');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                selectedFile = files[0];
+                fileInput.files = files;
+                uploadArea.innerHTML = `
+                    <p style="font-size: 48px; margin: 0;">✅</p>
+                    <p style="font-size: 18px; margin: 10px 0;">${selectedFile.name}</p>
+                    <p style="color: #666;">${(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                `;
+                analyzeBtn.disabled = false;
+            }
+        });
+
+        async function analyzeAudio() {
+            if (!selectedFile) return;
+
+            loading.style.display = 'block';
+            result.style.display = 'none';
+            error.style.display = 'none';
+            analyzeBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('audio', selectedFile);
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    // Mostrar imagen
+                    document.getElementById('resultImage').src = 'data:image/png;base64,' + data.image;
+
+                    // Mostrar datos del análisis
+                    const analysisData = document.getElementById('analysisData');
+                    analysisData.innerHTML = `
+                        <h3 style="margin-top: 0;">📈 Métricas del Fakeprint</h3>
+                        <div class="metric">
+                            <span class="metric-label">Media del Fakeprint:</span>
+                            <span class="metric-value">${data.analysis.fakeprint_mean.toFixed(4)}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Máximo del Fakeprint:</span>
+                            <span class="metric-value">${data.analysis.fakeprint_max.toFixed(4)}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Varianza:</span>
+                            <span class="metric-value">${data.analysis.fakeprint_variance.toFixed(6)}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Picos Espectrales (>0.5):</span>
+                            <span class="metric-value">${data.analysis.fakeprint_peaks}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Energía Alta Frecuencia:</span>
+                            <span class="metric-value">${data.analysis.high_freq_energy.toFixed(6)}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Centroide Espectral:</span>
+                            <span class="metric-value">${data.analysis.spectral_centroid_mean.toFixed(1)} Hz</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Rolloff Espectral:</span>
+                            <span class="metric-value">${data.analysis.spectral_rolloff_mean.toFixed(1)} Hz</span>
+                        </div>
+                    `;
+
+                    result.style.display = 'block';
+                } else {
+                    throw new Error(data.message || 'Error desconocido');
+                }
+            } catch (err) {
+                error.textContent = '❌ Error: ' + err.message;
+                error.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+                analyzeBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
