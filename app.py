@@ -27,7 +27,7 @@ CORS(app, origins=CORS_ORIGINS)
 # Configuración desde variables de entorno con valores por defecto
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', './uploads')
 ALLOWED_EXTENSIONS = set(os.getenv('ALLOWED_EXTENSIONS', 'mp3,wav,ogg,m4a,flac,aac').split(','))
-MAX_FILE_SIZE = int(os.getenv('MAX_CONTENT_LENGTH', 52428800))  # 50 MB por defecto
+MAX_FILE_SIZE = int(os.getenv('MAX_CONTENT_LENGTH', 68157440))  # 65 MB por defecto
 MODEL_PATH = os.getenv('MODEL_PATH', './models/detector.pkl')
 USE_PRETRAINED_MODEL = os.getenv('USE_PRETRAINED_MODEL', 'False').lower() == 'true'
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')

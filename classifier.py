@@ -69,17 +69,22 @@ class AIDetector:
                 - is_ai_generated: bool
                 - confidence: float (0-1)
                 - ai_probability: float (0-100)
+                - human_probability: float (0-100)
                 - duration: float (segundos)
                 - quality: str (Low/Medium/High/Lossless)
+                - bpm: float (beats per minute)
+                - key: str (tonalidad musical)
+                - danceability: float (0-1)
+                - energy: float (0-1)
         """
-        # Extraer metadata del audio
-        duration, quality = self._extract_audio_metadata(audio_path)
+        # Extraer metadata del audio (incluyendo análisis musicales)
+        metadata = self._extract_audio_metadata(audio_path)
 
         if not self.is_trained:
             # Usar heurística simple basada en energía de frecuencias altas
             result = self._predict_heuristic(audio_path)
-            result['duration'] = duration
-            result['quality'] = quality
+            # Agregar metadata
+            result.update(metadata)
             return result
 
         # Extraer características
@@ -94,40 +99,48 @@ class AIDetector:
         ai_prob = float(probability[1] * 100)  # Probabilidad de ser IA
         confidence = float(max(probability))
 
-        return {
+        result = {
             'is_ai_generated': is_ai,
             'confidence': confidence,
             'ai_probability': ai_prob,
-            'human_probability': float(probability[0] * 100),
-            'duration': duration,
-            'quality': quality
+            'human_probability': float(probability[0] * 100)
         }
+
+        # Agregar metadata musical
+        result.update(metadata)
+
+        return result
 
     def _extract_audio_metadata(self, audio_path):
         """
-        Extrae duración y calidad del audio
+        Extrae duración, calidad y análisis musicales del audio
 
         Args:
             audio_path: Ruta al archivo de audio
 
         Returns:
-            tuple: (duration_seconds, quality_string)
+            dict con metadata completa: {
+                'duration': float,
+                'quality': str,
+                'bpm': float,
+                'key': str,
+                'danceability': float (0-1),
+                'energy': float (0-1)
+            }
         """
         import librosa
         import os
 
         try:
-            # Obtener duración sin cargar todo el audio
-            duration = librosa.get_duration(path=audio_path)
+            # Cargar audio para análisis completo
+            y, sr = librosa.load(audio_path, sr=None)
 
-            # Obtener tamaño del archivo
+            # 1. DURACIÓN Y CALIDAD (análisis existente)
+            duration = librosa.get_duration(y=y, sr=sr)
+
             file_size = os.path.getsize(audio_path)
-            file_size_mb = file_size / (1024 * 1024)
-
-            # Calcular bitrate aproximado
             bitrate_kbps = (file_size * 8) / (duration * 1000) if duration > 0 else 0
 
-            # Determinar calidad basada en bitrate
             if bitrate_kbps >= 320:
                 quality = "Lossless"
             elif bitrate_kbps >= 192:
@@ -137,11 +150,103 @@ class AIDetector:
             else:
                 quality = "Low"
 
-            return float(duration), quality
+            # 2. BPM (Beats Per Minute)
+            try:
+                tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+                bpm = float(tempo)
+            except Exception as e:
+                print(f"Error calculando BPM: {e}")
+                bpm = None
+
+            # 3. TONALIDAD (Key)
+            try:
+                # Usar chromagram para detectar la tonalidad
+                chromagram = librosa.feature.chroma_cqt(y=y, sr=sr)
+                # Promediar sobre el tiempo
+                chroma_mean = np.mean(chromagram, axis=1)
+                # Encontrar el tono más prominente
+                key_index = int(np.argmax(chroma_mean))
+                keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+                key = keys[key_index]
+            except Exception as e:
+                print(f"Error calculando tonalidad: {e}")
+                key = None
+
+            # 4. DANCEABILITY (bailabilidad)
+            try:
+                # Basado en:
+                # - Regularidad del beat
+                # - Energía en frecuencias bajas (bass)
+                # - Estabilidad temporal del tempo
+
+                # 4a. Regularidad del beat
+                if len(beats) > 1:
+                    beat_intervals = np.diff(librosa.frames_to_time(beats, sr=sr))
+                    beat_regularity = 1.0 - min(np.std(beat_intervals) / (np.mean(beat_intervals) + 1e-6), 1.0)
+                else:
+                    beat_regularity = 0.0
+
+                # 4b. Energía en bajos (importante para bailabilidad)
+                spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+                # Normalizar (centroid bajo = más graves = más bailable)
+                bass_emphasis = max(0, 1.0 - (spectral_centroid / (sr / 2)))
+
+                # 4c. Combinar factores
+                danceability = float(0.6 * beat_regularity + 0.4 * bass_emphasis)
+                danceability = np.clip(danceability, 0.0, 1.0)
+
+            except Exception as e:
+                print(f"Error calculando danceability: {e}")
+                danceability = None
+
+            # 5. ENERGY (energía)
+            try:
+                # Basado en:
+                # - RMS (Root Mean Square) de la señal
+                # - Varianza espectral
+                # - Dinámica (rango entre loud/quiet)
+
+                # 5a. RMS energy
+                rms = librosa.feature.rms(y=y)[0]
+                rms_mean = float(np.mean(rms))
+
+                # 5b. Varianza espectral (más varianza = más energía)
+                spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+                spectral_variance = float(np.std(spectral_rolloff))
+
+                # Normalizar valores
+                # RMS típicamente está entre 0.01 y 0.3
+                rms_normalized = np.clip(rms_mean / 0.3, 0.0, 1.0)
+                # Spectral variance típicamente entre 0 y 5000
+                spectral_normalized = np.clip(spectral_variance / 5000, 0.0, 1.0)
+
+                # Combinar (RMS es más importante)
+                energy = float(0.7 * rms_normalized + 0.3 * spectral_normalized)
+                energy = np.clip(energy, 0.0, 1.0)
+
+            except Exception as e:
+                print(f"Error calculando energy: {e}")
+                energy = None
+
+            return {
+                'duration': float(duration),
+                'quality': quality,
+                'bpm': bpm,
+                'key': key,
+                'danceability': danceability,
+                'energy': energy
+            }
 
         except Exception as e:
             print(f"Error extracting metadata: {e}")
-            return None, None
+            return {
+                'duration': None,
+                'quality': None,
+                'bpm': None,
+                'key': None,
+                'danceability': None,
+                'energy': None
+            }
 
     def _predict_heuristic(self, audio_path):
         """
