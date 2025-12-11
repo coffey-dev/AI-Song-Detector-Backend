@@ -77,17 +77,28 @@ class AIDetector:
                 - danceability: float (0-1)
                 - energy: float (0-1)
         """
-        # Extraer metadata del audio (incluyendo análisis musicales)
-        # Esta función ya carga el audio internamente
-        metadata = self._extract_audio_metadata(audio_path)
+        import librosa
+
+        print(f"[PREDICT] Iniciando análisis completo para: {audio_path}")
+
+        # OPTIMIZACIÓN: Cargar audio UNA SOLA VEZ con límite de duración
+        print("[PREDICT] Cargando audio (máx 180s)...")
+        y_metadata, sr_metadata = librosa.load(audio_path, sr=None, duration=180)
+        print(f"[PREDICT] Audio cargado: {len(y_metadata)} samples, {sr_metadata} Hz")
+
+        # Extraer metadata musical usando el audio ya cargado
+        metadata = self._extract_audio_metadata_from_audio(y_metadata, sr_metadata, audio_path)
+        print(f"[PREDICT] Metadata extraída: {metadata}")
 
         if not self.is_trained:
-            # Cargar audio una sola vez para análisis heurístico
-            # Reutilizar la carga para evitar redundancia
+            # Cargar audio para análisis de IA (16kHz, necesario para fakeprint)
+            print("[PREDICT] Cargando audio para análisis de IA (16kHz)...")
             audio = self.analyzer.load_audio(audio_path)
+            print("[PREDICT] Ejecutando análisis heurístico...")
             result = self._predict_heuristic_with_audio(audio, audio_path)
             # Agregar metadata
             result.update(metadata)
+            print(f"[PREDICT] Resultado final: {result}")
             return result
 
         # Extraer características
@@ -114,37 +125,28 @@ class AIDetector:
 
         return result
 
-    def _extract_audio_metadata(self, audio_path):
+    def _extract_audio_metadata_from_audio(self, y, sr, audio_path):
         """
-        Extrae duración, calidad y análisis musicales del audio
+        Extrae duración, calidad y análisis musicales del audio YA CARGADO
 
         Args:
-            audio_path: Ruta al archivo de audio
+            y: Señal de audio (numpy array)
+            sr: Sample rate
+            audio_path: Ruta al archivo (solo para file size)
 
         Returns:
-            dict con metadata completa: {
-                'duration': float,
-                'quality': str,
-                'bpm': float,
-                'key': str,
-                'danceability': float (0-1),
-                'energy': float (0-1)
-            }
+            dict con metadata completa
         """
         import librosa
         import os
 
         try:
-            print(f"Iniciando análisis de metadata para: {audio_path}")
-            # Cargar audio con límite de duración para optimizar procesamiento
-            # Máximo 3 minutos (180 segundos) para evitar timeouts
-            print("Cargando audio (máx 180s)...")
-            y, sr = librosa.load(audio_path, sr=None, duration=180)
-            print(f"Audio cargado: {len(y)} samples, {sr} Hz")
+            print(f"[METADATA] Iniciando análisis de metadata")
+            print(f"[METADATA] Audio: {len(y)} samples, {sr} Hz")
 
             # 1. DURACIÓN Y CALIDAD (análisis existente)
             duration = librosa.get_duration(y=y, sr=sr)
-            print(f"Duración del audio: {duration:.2f}s")
+            print(f"[METADATA] Duración del audio: {duration:.2f}s")
 
             file_size = os.path.getsize(audio_path)
             bitrate_kbps = (file_size * 8) / (duration * 1000) if duration > 0 else 0
@@ -158,19 +160,21 @@ class AIDetector:
             else:
                 quality = "Low"
 
+            print(f"[METADATA] Calidad: {quality}")
+
             # 2. BPM (Beats Per Minute)
             try:
-                print("Calculando BPM...")
+                print("[METADATA] Calculando BPM...")
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
                 bpm = float(tempo)
-                print(f"BPM calculado: {bpm}")
+                print(f"[METADATA] BPM calculado: {bpm}")
             except Exception as e:
-                print(f"Error calculando BPM: {e}")
+                print(f"[METADATA] Error calculando BPM: {e}")
                 bpm = None
 
             # 3. TONALIDAD (Key)
             try:
-                print("Detectando tonalidad...")
+                print("[METADATA] Detectando tonalidad...")
                 # Usar chromagram para detectar la tonalidad
                 chromagram = librosa.feature.chroma_cqt(y=y, sr=sr)
                 # Promediar sobre el tiempo
@@ -179,13 +183,14 @@ class AIDetector:
                 key_index = int(np.argmax(chroma_mean))
                 keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
                 key = keys[key_index]
-                print(f"Tonalidad detectada: {key}")
+                print(f"[METADATA] Tonalidad detectada: {key}")
             except Exception as e:
-                print(f"Error calculando tonalidad: {e}")
+                print(f"[METADATA] Error calculando tonalidad: {e}")
                 key = None
 
             # 4. DANCEABILITY (bailabilidad)
             try:
+                print("[METADATA] Calculando danceability...")
                 # Basado en:
                 # - Regularidad del beat
                 # - Energía en frecuencias bajas (bass)
@@ -206,13 +211,15 @@ class AIDetector:
                 # 4c. Combinar factores
                 danceability = float(0.6 * beat_regularity + 0.4 * bass_emphasis)
                 danceability = np.clip(danceability, 0.0, 1.0)
+                print(f"[METADATA] Danceability calculada: {danceability:.2f}")
 
             except Exception as e:
-                print(f"Error calculando danceability: {e}")
+                print(f"[METADATA] Error calculando danceability: {e}")
                 danceability = None
 
             # 5. ENERGY (energía)
             try:
+                print("[METADATA] Calculando energy...")
                 # Basado en:
                 # - RMS (Root Mean Square) de la señal
                 # - Varianza espectral
@@ -235,12 +242,13 @@ class AIDetector:
                 # Combinar (RMS es más importante)
                 energy = float(0.7 * rms_normalized + 0.3 * spectral_normalized)
                 energy = np.clip(energy, 0.0, 1.0)
+                print(f"[METADATA] Energy calculada: {energy:.2f}")
 
             except Exception as e:
-                print(f"Error calculando energy: {e}")
+                print(f"[METADATA] Error calculando energy: {e}")
                 energy = None
 
-            return {
+            result = {
                 'duration': float(duration),
                 'quality': quality,
                 'bpm': bpm,
@@ -248,9 +256,13 @@ class AIDetector:
                 'danceability': danceability,
                 'energy': energy
             }
+            print(f"[METADATA] Análisis completo: {result}")
+            return result
 
         except Exception as e:
-            print(f"Error extracting metadata: {e}")
+            print(f"[METADATA] Error extracting metadata: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'duration': None,
                 'quality': None,
