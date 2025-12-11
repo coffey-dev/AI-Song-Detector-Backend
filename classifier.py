@@ -82,8 +82,9 @@ class AIDetector:
         print(f"[PREDICT] Iniciando análisis completo para: {audio_path}")
 
         # OPTIMIZACIÓN: Cargar audio UNA SOLA VEZ con límite de duración
-        print("[PREDICT] Cargando audio (máx 180s)...")
-        y_metadata, sr_metadata = librosa.load(audio_path, sr=None, duration=180)
+        # Reducido a 60s para evitar timeouts en Railway
+        print("[PREDICT] Cargando audio (máx 60s)...")
+        y_metadata, sr_metadata = librosa.load(audio_path, sr=22050, duration=60)
         print(f"[PREDICT] Audio cargado: {len(y_metadata)} samples, {sr_metadata} Hz")
 
         # Extraer metadata musical usando el audio ya cargado
@@ -165,7 +166,8 @@ class AIDetector:
             # 2. BPM (Beats Per Minute)
             try:
                 print("[METADATA] Calculando BPM...")
-                tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+                # Usar hop_length grande para acelerar procesamiento
+                tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=1024)
                 bpm = float(tempo)
                 print(f"[METADATA] BPM calculado: {bpm}")
             except Exception as e:
@@ -175,8 +177,8 @@ class AIDetector:
             # 3. TONALIDAD (Key)
             try:
                 print("[METADATA] Detectando tonalidad...")
-                # Usar chromagram para detectar la tonalidad
-                chromagram = librosa.feature.chroma_cqt(y=y, sr=sr)
+                # Usar chroma_stft en lugar de chroma_cqt (mucho más rápido)
+                chromagram = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=2048)
                 # Promediar sobre el tiempo
                 chroma_mean = np.mean(chromagram, axis=1)
                 # Encontrar el tono más prominente
@@ -194,17 +196,17 @@ class AIDetector:
                 # Basado en:
                 # - Regularidad del beat
                 # - Energía en frecuencias bajas (bass)
-                # - Estabilidad temporal del tempo
 
                 # 4a. Regularidad del beat
-                if len(beats) > 1:
-                    beat_intervals = np.diff(librosa.frames_to_time(beats, sr=sr))
+                if beats is not None and len(beats) > 1:
+                    beat_intervals = np.diff(librosa.frames_to_time(beats, sr=sr, hop_length=1024))
                     beat_regularity = 1.0 - min(np.std(beat_intervals) / (np.mean(beat_intervals) + 1e-6), 1.0)
                 else:
                     beat_regularity = 0.0
 
                 # 4b. Energía en bajos (importante para bailabilidad)
-                spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+                # Usar hop_length grande para acelerar
+                spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=2048))
                 # Normalizar (centroid bajo = más graves = más bailable)
                 bass_emphasis = max(0, 1.0 - (spectral_centroid / (sr / 2)))
 
@@ -215,37 +217,27 @@ class AIDetector:
 
             except Exception as e:
                 print(f"[METADATA] Error calculando danceability: {e}")
+                import traceback
+                traceback.print_exc()
                 danceability = None
 
             # 5. ENERGY (energía)
             try:
                 print("[METADATA] Calculando energy...")
-                # Basado en:
-                # - RMS (Root Mean Square) de la señal
-                # - Varianza espectral
-                # - Dinámica (rango entre loud/quiet)
-
-                # 5a. RMS energy
-                rms = librosa.feature.rms(y=y)[0]
+                # Basado en RMS (Root Mean Square) de la señal
+                # Usar hop_length grande para acelerar
+                rms = librosa.feature.rms(y=y, hop_length=2048)[0]
                 rms_mean = float(np.mean(rms))
-
-                # 5b. Varianza espectral (más varianza = más energía)
-                spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
-                spectral_variance = float(np.std(spectral_rolloff))
 
                 # Normalizar valores
                 # RMS típicamente está entre 0.01 y 0.3
-                rms_normalized = np.clip(rms_mean / 0.3, 0.0, 1.0)
-                # Spectral variance típicamente entre 0 y 5000
-                spectral_normalized = np.clip(spectral_variance / 5000, 0.0, 1.0)
-
-                # Combinar (RMS es más importante)
-                energy = float(0.7 * rms_normalized + 0.3 * spectral_normalized)
-                energy = np.clip(energy, 0.0, 1.0)
+                energy = np.clip(rms_mean / 0.3, 0.0, 1.0)
                 print(f"[METADATA] Energy calculada: {energy:.2f}")
 
             except Exception as e:
                 print(f"[METADATA] Error calculando energy: {e}")
+                import traceback
+                traceback.print_exc()
                 energy = None
 
             result = {
