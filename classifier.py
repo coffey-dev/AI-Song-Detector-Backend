@@ -78,11 +78,14 @@ class AIDetector:
                 - energy: float (0-1)
         """
         # Extraer metadata del audio (incluyendo análisis musicales)
+        # Esta función ya carga el audio internamente
         metadata = self._extract_audio_metadata(audio_path)
 
         if not self.is_trained:
-            # Usar heurística simple basada en energía de frecuencias altas
-            result = self._predict_heuristic(audio_path)
+            # Cargar audio una sola vez para análisis heurístico
+            # Reutilizar la carga para evitar redundancia
+            audio = self.analyzer.load_audio(audio_path)
+            result = self._predict_heuristic_with_audio(audio, audio_path)
             # Agregar metadata
             result.update(metadata)
             return result
@@ -132,11 +135,16 @@ class AIDetector:
         import os
 
         try:
-            # Cargar audio para análisis completo
-            y, sr = librosa.load(audio_path, sr=None)
+            print(f"Iniciando análisis de metadata para: {audio_path}")
+            # Cargar audio con límite de duración para optimizar procesamiento
+            # Máximo 3 minutos (180 segundos) para evitar timeouts
+            print("Cargando audio (máx 180s)...")
+            y, sr = librosa.load(audio_path, sr=None, duration=180)
+            print(f"Audio cargado: {len(y)} samples, {sr} Hz")
 
             # 1. DURACIÓN Y CALIDAD (análisis existente)
             duration = librosa.get_duration(y=y, sr=sr)
+            print(f"Duración del audio: {duration:.2f}s")
 
             file_size = os.path.getsize(audio_path)
             bitrate_kbps = (file_size * 8) / (duration * 1000) if duration > 0 else 0
@@ -152,14 +160,17 @@ class AIDetector:
 
             # 2. BPM (Beats Per Minute)
             try:
+                print("Calculando BPM...")
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
                 bpm = float(tempo)
+                print(f"BPM calculado: {bpm}")
             except Exception as e:
                 print(f"Error calculando BPM: {e}")
                 bpm = None
 
             # 3. TONALIDAD (Key)
             try:
+                print("Detectando tonalidad...")
                 # Usar chromagram para detectar la tonalidad
                 chromagram = librosa.feature.chroma_cqt(y=y, sr=sr)
                 # Promediar sobre el tiempo
@@ -168,6 +179,7 @@ class AIDetector:
                 key_index = int(np.argmax(chroma_mean))
                 keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
                 key = keys[key_index]
+                print(f"Tonalidad detectada: {key}")
             except Exception as e:
                 print(f"Error calculando tonalidad: {e}")
                 key = None
@@ -248,6 +260,21 @@ class AIDetector:
                 'energy': None
             }
 
+    def _predict_heuristic_with_audio(self, audio, audio_path):
+        """
+        Predicción mejorada usando audio ya cargado (optimización)
+
+        Args:
+            audio: Audio ya cargado
+            audio_path: Ruta al archivo (para logging)
+
+        Returns:
+            dict con resultados detallados
+        """
+        fakeprint = self.analyzer.compute_fakeprint(audio)
+        extra_features = self.analyzer.extract_additional_features(audio)
+        return self._compute_heuristic_prediction(fakeprint, extra_features)
+
     def _predict_heuristic(self, audio_path):
         """
         Predicción mejorada basada en análisis espectral avanzado
@@ -268,7 +295,19 @@ class AIDetector:
         audio = self.analyzer.load_audio(audio_path)
         fakeprint = self.analyzer.compute_fakeprint(audio)
         extra_features = self.analyzer.extract_additional_features(audio)
+        return self._compute_heuristic_prediction(fakeprint, extra_features)
 
+    def _compute_heuristic_prediction(self, fakeprint, extra_features):
+        """
+        Calcula la predicción heurística basada en características extraídas
+
+        Args:
+            fakeprint: Vector de características espectrales
+            extra_features: Diccionario con características adicionales
+
+        Returns:
+            dict con resultados de la predicción
+        """
         # =====================================================
         # ANÁLISIS 1: DETECCIÓN DE PICOS ESPECTRALES
         # =====================================================
