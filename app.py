@@ -1,6 +1,9 @@
 """
 AI Music Detector - Flask API Server
 API REST para detectar música generada con IA
+
+OPTIMIZADO: Solo realiza detección de IA vs Humano
+(Sin extracción de BPM, Key, Energy, Danceability - procesado en el cliente)
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -54,20 +57,24 @@ def health_check():
     """Endpoint de health check"""
     return jsonify({
         'status': 'ok',
-        'message': 'AI Music Detector API is running',
-        'version': '1.0.0'
+        'message': 'AI Music Detector API is running (AI detection only)',
+        'version': '2.0.0'
     })
 
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_audio():
     """
-    Endpoint principal para analizar audio
+    Endpoint principal para detectar música generada con IA
 
     Espera un archivo de audio en multipart/form-data
 
     Returns:
-        JSON con el resultado del análisis
+        JSON con detección de IA:
+        - is_ai_generated: bool
+        - confidence: float (0-1)
+        - ai_probability: float (0-100)
+        - human_probability: float (0-100)
     """
     try:
         # Verificar que se envió un archivo
@@ -193,14 +200,15 @@ def get_info():
     """
     return jsonify({
         'name': 'AI Music Detector',
-        'description': 'Detecta música generada con Inteligencia Artificial usando análisis espectral',
-        'version': '1.0.0',
+        'description': 'Detecta música generada con IA usando análisis espectral (Solo AI detection - sin BPM/Key/Energy)',
+        'version': '2.0.0',
         'based_on': 'ISMIR 2025 paper: A Fourier Explanation of AI-music Artifacts',
         'supported_formats': list(ALLOWED_EXTENSIONS),
         'max_file_size_mb': MAX_FILE_SIZE / (1024 * 1024),
         'analysis_method': 'Fakeprint analysis + Logistic Regression',
         'frequency_range': '5000-16000 Hz',
-        'model_status': 'heuristic' if not detector.is_trained else 'trained'
+        'model_status': 'heuristic' if not detector.is_trained else 'trained',
+        'features': 'AI detection only (musical features processed client-side)'
     })
 
 
@@ -296,7 +304,8 @@ if __name__ == '__main__':
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', '1') == '1'
 
     print("=" * 50)
-    print("AI Music Detector - Backend Server")
+    print("AI Music Detector - Backend Server v2.0")
+    print("OPTIMIZED: AI Detection Only")
     print("=" * 50)
     print(f"Entorno: {os.getenv('FLASK_ENV', 'development')}")
     print(f"Modo Debug: {FLASK_DEBUG}")
@@ -305,12 +314,13 @@ if __name__ == '__main__':
     print(f"Directorio de uploads: {UPLOAD_FOLDER}")
     print(f"Modo del modelo: {'Heurístico' if not detector.is_trained else 'Entrenado'}")
     print(f"CORS origins: {CORS_ORIGINS}")
+    print(f"Funcionalidad: Solo detección de IA (BPM/Key/Energy en cliente)")
     print("=" * 50)
     print(f"\nServidor iniciando en http://{HOST}:{PORT}")
     print("\nEndpoints disponibles:")
     print("  GET  /health            - Health check")
     print("  GET  /api/info          - Información del detector")
-    print("  POST /api/analyze       - Analizar un archivo de audio")
+    print("  POST /api/analyze       - Detectar si audio es generado con IA")
     print("  POST /api/visualize     - Generar gráfico de análisis espectral")
     print("  POST /api/batch-analyze - Analizar múltiples archivos")
     print("=" * 50)

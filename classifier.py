@@ -60,6 +60,7 @@ class AIDetector:
     def predict(self, audio_path):
         """
         Predice si un audio es generado con IA
+        OPTIMIZADO: Solo retorna detección de IA (sin BPM, Key, Energy, etc.)
 
         Args:
             audio_path: Ruta al archivo de audio
@@ -70,39 +71,20 @@ class AIDetector:
                 - confidence: float (0-1)
                 - ai_probability: float (0-100)
                 - human_probability: float (0-100)
-                - duration: float (segundos)
-                - quality: str (Low/Medium/High/Lossless)
-                - bpm: float (beats per minute)
-                - key: str (tonalidad musical)
-                - danceability: float (0-1)
-                - energy: float (0-1)
         """
-        import librosa
-
-        print(f"[PREDICT] Iniciando análisis completo para: {audio_path}")
-
-        # OPTIMIZACIÓN: Cargar audio UNA SOLA VEZ con límite de duración
-        # Reducido a 60s para evitar timeouts en Railway
-        print("[PREDICT] Cargando audio (máx 60s)...")
-        y_metadata, sr_metadata = librosa.load(audio_path, sr=22050, duration=60)
-        print(f"[PREDICT] Audio cargado: {len(y_metadata)} samples, {sr_metadata} Hz")
-
-        # Extraer metadata musical usando el audio ya cargado
-        metadata = self._extract_audio_metadata_from_audio(y_metadata, sr_metadata, audio_path)
-        print(f"[PREDICT] Metadata extraída: {metadata}")
+        print(f"[PREDICT] Iniciando análisis de IA para: {audio_path}")
 
         if not self.is_trained:
-            # Cargar audio para análisis de IA (16kHz, necesario para fakeprint)
+            # Modo heurístico: cargar audio y analizar
             print("[PREDICT] Cargando audio para análisis de IA (16kHz)...")
             audio = self.analyzer.load_audio(audio_path)
             print("[PREDICT] Ejecutando análisis heurístico...")
             result = self._predict_heuristic_with_audio(audio, audio_path)
-            # Agregar metadata
-            result.update(metadata)
-            print(f"[PREDICT] Resultado final: {result}")
+            print(f"[PREDICT] Resultado: {result}")
             return result
 
-        # Extraer características
+        # Modo entrenado: usar modelo ML
+        print("[PREDICT] Extrayendo características para modelo entrenado...")
         features = self.analyzer.analyze_audio_file(audio_path)
         features = features.reshape(1, -1)
 
@@ -111,7 +93,7 @@ class AIDetector:
         probability = self.model.predict_proba(features)[0]
 
         is_ai = bool(prediction == 1)
-        ai_prob = float(probability[1] * 100)  # Probabilidad de ser IA
+        ai_prob = float(probability[1] * 100)
         confidence = float(max(probability))
 
         result = {
@@ -121,148 +103,8 @@ class AIDetector:
             'human_probability': float(probability[0] * 100)
         }
 
-        # Agregar metadata musical
-        result.update(metadata)
-
+        print(f"[PREDICT] Resultado: {result}")
         return result
-
-    def _extract_audio_metadata_from_audio(self, y, sr, audio_path):
-        """
-        Extrae duración, calidad y análisis musicales del audio YA CARGADO
-
-        Args:
-            y: Señal de audio (numpy array)
-            sr: Sample rate
-            audio_path: Ruta al archivo (solo para file size)
-
-        Returns:
-            dict con metadata completa
-        """
-        import librosa
-        import os
-
-        try:
-            print(f"[METADATA] Iniciando análisis de metadata")
-            print(f"[METADATA] Audio: {len(y)} samples, {sr} Hz")
-
-            # 1. DURACIÓN Y CALIDAD (análisis existente)
-            duration = librosa.get_duration(y=y, sr=sr)
-            print(f"[METADATA] Duración del audio: {duration:.2f}s")
-
-            file_size = os.path.getsize(audio_path)
-            bitrate_kbps = (file_size * 8) / (duration * 1000) if duration > 0 else 0
-
-            if bitrate_kbps >= 320:
-                quality = "Lossless"
-            elif bitrate_kbps >= 192:
-                quality = "High"
-            elif bitrate_kbps >= 128:
-                quality = "Medium"
-            else:
-                quality = "Low"
-
-            print(f"[METADATA] Calidad: {quality}")
-
-            # 2. BPM (Beats Per Minute)
-            try:
-                print("[METADATA] Calculando BPM...")
-                # Usar hop_length grande para acelerar procesamiento
-                tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=1024)
-                bpm = float(tempo)
-                print(f"[METADATA] BPM calculado: {bpm}")
-            except Exception as e:
-                print(f"[METADATA] Error calculando BPM: {e}")
-                bpm = None
-
-            # 3. TONALIDAD (Key)
-            try:
-                print("[METADATA] Detectando tonalidad...")
-                # Usar chroma_stft en lugar de chroma_cqt (mucho más rápido)
-                chromagram = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=2048)
-                # Promediar sobre el tiempo
-                chroma_mean = np.mean(chromagram, axis=1)
-                # Encontrar el tono más prominente
-                key_index = int(np.argmax(chroma_mean))
-                keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-                key = keys[key_index]
-                print(f"[METADATA] Tonalidad detectada: {key}")
-            except Exception as e:
-                print(f"[METADATA] Error calculando tonalidad: {e}")
-                key = None
-
-            # 4. DANCEABILITY (bailabilidad)
-            try:
-                print("[METADATA] Calculando danceability...")
-                # Basado en:
-                # - Regularidad del beat
-                # - Energía en frecuencias bajas (bass)
-
-                # 4a. Regularidad del beat
-                if beats is not None and len(beats) > 1:
-                    beat_intervals = np.diff(librosa.frames_to_time(beats, sr=sr, hop_length=1024))
-                    beat_regularity = 1.0 - min(np.std(beat_intervals) / (np.mean(beat_intervals) + 1e-6), 1.0)
-                else:
-                    beat_regularity = 0.0
-
-                # 4b. Energía en bajos (importante para bailabilidad)
-                # Usar hop_length grande para acelerar
-                spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=2048))
-                # Normalizar (centroid bajo = más graves = más bailable)
-                bass_emphasis = max(0, 1.0 - (spectral_centroid / (sr / 2)))
-
-                # 4c. Combinar factores
-                danceability = float(0.6 * beat_regularity + 0.4 * bass_emphasis)
-                danceability = np.clip(danceability, 0.0, 1.0)
-                print(f"[METADATA] Danceability calculada: {danceability:.2f}")
-
-            except Exception as e:
-                print(f"[METADATA] Error calculando danceability: {e}")
-                import traceback
-                traceback.print_exc()
-                danceability = None
-
-            # 5. ENERGY (energía)
-            try:
-                print("[METADATA] Calculando energy...")
-                # Basado en RMS (Root Mean Square) de la señal
-                # Usar hop_length grande para acelerar
-                rms = librosa.feature.rms(y=y, hop_length=2048)[0]
-                rms_mean = float(np.mean(rms))
-
-                # Normalizar valores
-                # RMS típicamente está entre 0.01 y 0.3
-                energy = np.clip(rms_mean / 0.3, 0.0, 1.0)
-                print(f"[METADATA] Energy calculada: {energy:.2f}")
-
-            except Exception as e:
-                print(f"[METADATA] Error calculando energy: {e}")
-                import traceback
-                traceback.print_exc()
-                energy = None
-
-            result = {
-                'duration': float(duration),
-                'quality': quality,
-                'bpm': bpm,
-                'key': key,
-                'danceability': danceability,
-                'energy': energy
-            }
-            print(f"[METADATA] Análisis completo: {result}")
-            return result
-
-        except Exception as e:
-            print(f"[METADATA] Error extracting metadata: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                'duration': None,
-                'quality': None,
-                'bpm': None,
-                'key': None,
-                'danceability': None,
-                'energy': None
-            }
 
     def _predict_heuristic_with_audio(self, audio, audio_path):
         """
