@@ -1,12 +1,10 @@
-# AI Music Detector - Backend v2.0
+# AI Music Detector - Backend
 
-Backend API optimizado para detectar música generada con Inteligencia Artificial.
+Backend API para detectar música generada con Inteligencia Artificial.
 
 ## Descripción
 
 Este backend implementa el método descrito en el paper ISMIR 2025 "A Fourier Explanation of AI-music Artifacts" usando la librería `librosa` para el análisis de audio.
-
-**⚡ OPTIMIZADO v2.0**: Este backend ahora se enfoca **exclusivamente en detección de IA vs Humano**. Las características musicales (BPM, Key, Energy, Danceability) se procesan del lado del cliente usando módulos nativos para mayor rendimiento y menor latencia.
 
 ### Método de Detección
 
@@ -69,8 +67,8 @@ Health check del servidor
 ```json
 {
   "status": "ok",
-  "message": "AI Music Detector API is running (AI detection only)",
-  "version": "2.0.0"
+  "message": "AI Music Detector API is running",
+  "version": "1.0.0"
 }
 ```
 
@@ -82,19 +80,16 @@ Información sobre el detector
 ```json
 {
   "name": "AI Music Detector",
-  "description": "Detecta música generada con IA usando análisis espectral (Solo AI detection - sin BPM/Key/Energy)",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "supported_formats": ["mp3", "wav", "ogg", "m4a", "flac", "aac"],
-  "max_file_size_mb": 65,
-  "analysis_method": "Fakeprint analysis + Logistic Regression",
-  "frequency_range": "5000-16000 Hz",
-  "features": "AI detection only (musical features processed client-side)"
+  "max_file_size_mb": 50,
+  "analysis_method": "Fakeprint analysis + Logistic Regression"
 }
 ```
 
 ### POST /api/analyze
 
-Detecta si un archivo de audio fue generado con IA (sin extraer características musicales)
+Analiza un archivo de audio
 
 **Request:**
 - Content-Type: `multipart/form-data`
@@ -111,8 +106,6 @@ Detecta si un archivo de audio fue generado con IA (sin extraer características
   "status": "success"
 }
 ```
-
-**Nota:** Este endpoint ya NO retorna BPM, Key, Energy ni Danceability. Esas características se procesan en el cliente para mayor rendimiento.
 
 ### POST /api/batch-analyze
 
