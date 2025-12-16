@@ -76,7 +76,7 @@ class AIDetector:
                 - key: str (tonalidad musical)
                 - danceability: float (0-1)
                 - energy: float (0-1)
-                - liveness: float (0-1)
+                - loudness: float (dB, normalizado 0-1)
                 - valence: float (0-1)
         """
         import librosa
@@ -242,50 +242,39 @@ class AIDetector:
                 traceback.print_exc()
                 energy = None
 
-            # 6. LIVENESS (detección de grabación en vivo)
+            # 6. LOUDNESS (volumen/intensidad en dB)
             try:
-                print("[METADATA] Calculando liveness...")
+                print("[METADATA] Calculando loudness...")
                 # Basado en:
-                # - Variabilidad en la energía (audiencia genera picos irregulares)
-                # - Detección de ruido ambiente/audiencia
-                # - Espaciosidad/reverberación de sala
+                # - RMS (Root Mean Square) de la señal convertido a dB
+                # - Normalizado a escala 0-1 para facilidad de uso
 
-                # 6a. Variabilidad de energía (audiencia = más variabilidad)
+                # 6a. Calcular RMS y convertir a dB
                 if rms is not None:
-                    rms_variance = float(np.std(rms))
-                    # Normalizar: valores típicos entre 0.01-0.15
-                    energy_variability = np.clip(rms_variance / 0.15, 0.0, 1.0)
+                    # Evitar log de cero
+                    rms_safe = np.maximum(rms, 1e-10)
+
+                    # Convertir a dB: 20 * log10(rms)
+                    loudness_db = 20 * np.log10(rms_safe)
+
+                    # Calcular loudness promedio
+                    mean_loudness_db = float(np.mean(loudness_db))
+
+                    # Normalizar a escala 0-1
+                    # Rango típico: -60 dB (muy silencioso) a 0 dB (máximo)
+                    # Mapear: -60 dB -> 0.0, 0 dB -> 1.0
+                    loudness = np.clip((mean_loudness_db + 60) / 60, 0.0, 1.0)
+
+                    print(f"[METADATA] Loudness calculada: {loudness:.2f} (dB promedio: {mean_loudness_db:.2f})")
                 else:
-                    energy_variability = 0.0
-
-                # 6b. Detección de componentes de audiencia en frecuencias medias
-                # Audiencia suele estar en 200-3000 Hz (voces, aplausos)
-                S = np.abs(librosa.stft(y=y, hop_length=2048))
-                freqs = librosa.fft_frequencies(sr=sr)
-
-                # Filtrar rango de frecuencias de audiencia (200-3000 Hz)
-                audience_freq_mask = (freqs >= 200) & (freqs <= 3000)
-                audience_energy = np.mean(S[audience_freq_mask, :]) if np.any(audience_freq_mask) else 0.0
-
-                # Normalizar
-                audience_score = np.clip(audience_energy / 0.1, 0.0, 1.0)
-
-                # 6c. Espaciosidad (reverb de sala grande)
-                # Usar spectral flatness (más plano = más reverb = más en vivo)
-                spectral_flatness = np.mean(librosa.feature.spectral_flatness(y=y, hop_length=2048))
-                flatness_score = float(np.clip(spectral_flatness * 3, 0.0, 1.0))
-
-                # 6d. Combinar factores
-                # Pesos: variabilidad (40%), audiencia (40%), espaciosidad (20%)
-                liveness = float(0.4 * energy_variability + 0.4 * audience_score + 0.2 * flatness_score)
-                liveness = np.clip(liveness, 0.0, 1.0)
-                print(f"[METADATA] Liveness calculada: {liveness:.2f}")
+                    loudness = None
+                    print("[METADATA] No se pudo calcular loudness (RMS no disponible)")
 
             except Exception as e:
-                print(f"[METADATA] Error calculando liveness: {e}")
+                print(f"[METADATA] Error calculando loudness: {e}")
                 import traceback
                 traceback.print_exc()
-                liveness = None
+                loudness = None
 
             # 7. VALENCE (positividad musical)
             try:
@@ -350,7 +339,7 @@ class AIDetector:
                 'key': key,
                 'danceability': danceability,
                 'energy': energy,
-                'liveness': liveness,
+                'loudness': loudness,
                 'valence': valence
             }
             print(f"[METADATA] Análisis completo: {result}")
@@ -367,7 +356,7 @@ class AIDetector:
                 'key': None,
                 'danceability': None,
                 'energy': None,
-                'liveness': None,
+                'loudness': None,
                 'valence': None
             }
 
