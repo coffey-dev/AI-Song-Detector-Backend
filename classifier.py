@@ -76,6 +76,8 @@ class AIDetector:
                 - key: str (tonalidad musical)
                 - danceability: float (0-1)
                 - energy: float (0-1)
+                - liveness: float (0-1)
+                - valence: float (0-1)
         """
         import librosa
 
@@ -240,13 +242,116 @@ class AIDetector:
                 traceback.print_exc()
                 energy = None
 
+            # 6. LIVENESS (detección de grabación en vivo)
+            try:
+                print("[METADATA] Calculando liveness...")
+                # Basado en:
+                # - Variabilidad en la energía (audiencia genera picos irregulares)
+                # - Detección de ruido ambiente/audiencia
+                # - Espaciosidad/reverberación de sala
+
+                # 6a. Variabilidad de energía (audiencia = más variabilidad)
+                if rms is not None:
+                    rms_variance = float(np.std(rms))
+                    # Normalizar: valores típicos entre 0.01-0.15
+                    energy_variability = np.clip(rms_variance / 0.15, 0.0, 1.0)
+                else:
+                    energy_variability = 0.0
+
+                # 6b. Detección de componentes de audiencia en frecuencias medias
+                # Audiencia suele estar en 200-3000 Hz (voces, aplausos)
+                S = np.abs(librosa.stft(y=y, hop_length=2048))
+                freqs = librosa.fft_frequencies(sr=sr)
+
+                # Filtrar rango de frecuencias de audiencia (200-3000 Hz)
+                audience_freq_mask = (freqs >= 200) & (freqs <= 3000)
+                audience_energy = np.mean(S[audience_freq_mask, :]) if np.any(audience_freq_mask) else 0.0
+
+                # Normalizar
+                audience_score = np.clip(audience_energy / 0.1, 0.0, 1.0)
+
+                # 6c. Espaciosidad (reverb de sala grande)
+                # Usar spectral flatness (más plano = más reverb = más en vivo)
+                spectral_flatness = np.mean(librosa.feature.spectral_flatness(y=y, hop_length=2048))
+                flatness_score = float(np.clip(spectral_flatness * 3, 0.0, 1.0))
+
+                # 6d. Combinar factores
+                # Pesos: variabilidad (40%), audiencia (40%), espaciosidad (20%)
+                liveness = float(0.4 * energy_variability + 0.4 * audience_score + 0.2 * flatness_score)
+                liveness = np.clip(liveness, 0.0, 1.0)
+                print(f"[METADATA] Liveness calculada: {liveness:.2f}")
+
+            except Exception as e:
+                print(f"[METADATA] Error calculando liveness: {e}")
+                import traceback
+                traceback.print_exc()
+                liveness = None
+
+            # 7. VALENCE (positividad musical)
+            try:
+                print("[METADATA] Calculando valence...")
+                # Basado en:
+                # - Modo mayor vs menor (mayor = más feliz)
+                # - Brillo espectral (armónicos agudos = más feliz)
+                # - Tempo (más rápido = más energético/feliz)
+
+                # 7a. Detectar modo mayor vs menor usando chromagram
+                if chromagram is not None:
+                    # Promediar sobre el tiempo
+                    chroma_mean = np.mean(chromagram, axis=1)
+
+                    # Perfiles de acordes mayores y menores
+                    major_profile = np.array([1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0])  # C major: C, E, G
+                    minor_profile = np.array([1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0])  # C minor: C, Eb, G
+
+                    # Rotar perfiles para coincidir con la tonalidad detectada
+                    if key is not None:
+                        key_index = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'].index(key)
+                        major_profile = np.roll(major_profile, key_index)
+                        minor_profile = np.roll(minor_profile, key_index)
+
+                    # Correlación con perfiles
+                    major_correlation = float(np.corrcoef(chroma_mean, major_profile)[0, 1])
+                    minor_correlation = float(np.corrcoef(chroma_mean, minor_profile)[0, 1])
+
+                    # Modo mayor = más feliz (valor 1.0), menor = más triste (valor 0.0)
+                    mode_score = (major_correlation - minor_correlation + 1) / 2  # Normalizar a 0-1
+                    mode_score = np.clip(mode_score, 0.0, 1.0)
+                else:
+                    mode_score = 0.5  # Neutral si no hay chromagram
+
+                # 7b. Brillo espectral (spectral centroid alto = más brillante = más feliz)
+                spectral_centroid_norm = np.clip((spectral_centroid - 1000) / 2000, 0.0, 1.0)
+                brightness_score = float(spectral_centroid_norm)
+
+                # 7c. Tempo (BPM alto = más energético/feliz)
+                if bpm is not None:
+                    # BPM típico: 60-180. BPM alto (>120) = más energético
+                    tempo_score = np.clip((bpm - 80) / 80, 0.0, 1.0)
+                else:
+                    tempo_score = 0.5  # Neutral si no hay BPM
+
+                # 7d. Combinar factores
+                # Pesos: modo (50%), brillo (30%), tempo (20%)
+                valence = float(0.5 * mode_score + 0.3 * brightness_score + 0.2 * tempo_score)
+                valence = np.clip(valence, 0.0, 1.0)
+                print(f"[METADATA] Valence calculada: {valence:.2f}")
+
+            except Exception as e:
+                print(f"[METADATA] Error calculando valence: {e}")
+                import traceback
+                traceback.print_exc()
+                valence = None
+
             result = {
                 'duration': float(duration),
                 'quality': quality,
                 'bpm': bpm,
                 'key': key,
                 'danceability': danceability,
-                'energy': energy
+                'energy': energy,
+                'liveness': liveness,
+                'valence': valence
             }
             print(f"[METADATA] Análisis completo: {result}")
             return result
@@ -261,7 +366,9 @@ class AIDetector:
                 'bpm': None,
                 'key': None,
                 'danceability': None,
-                'energy': None
+                'energy': None,
+                'liveness': None,
+                'valence': None
             }
 
     def _predict_heuristic_with_audio(self, audio, audio_path):
