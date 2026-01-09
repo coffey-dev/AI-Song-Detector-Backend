@@ -5,6 +5,7 @@ AI Music Detector - Clasificador
 import numpy as np
 import pickle
 import os
+import gc
 from sklearn.linear_model import LogisticRegression
 from audio_analyzer import AudioAnalyzer
 
@@ -83,24 +84,26 @@ class AIDetector:
 
         print(f"[PREDICT] Iniciando análisis completo para: {audio_path}")
 
-        # OPTIMIZACIÓN: Cargar audio UNA SOLA VEZ con límite de duración
-        # Reducido a 60s para evitar timeouts en Railway
-        print("[PREDICT] Cargando audio (máx 60s)...")
-        y_metadata, sr_metadata = librosa.load(audio_path, sr=22050, duration=60)
-        print(f"[PREDICT] Audio cargado: {len(y_metadata)} samples, {sr_metadata} Hz")
+        # OPTIMIZACIÓN MEJORADA: Cargar audio UNA SOLA VEZ a 16kHz
+        # 16kHz es suficiente para análisis de IA y metadata musical
+        print("[PREDICT] Cargando audio (máx 60s, 16kHz)...")
+        audio = self.analyzer.load_audio(audio_path, max_duration=60)
+        sr = self.analyzer.sr  # 16000 Hz
+        print(f"[PREDICT] Audio cargado: {len(audio)} samples, {sr} Hz")
 
-        # Extraer metadata musical usando el audio ya cargado
-        metadata = self._extract_audio_metadata_from_audio(y_metadata, sr_metadata, audio_path)
+        # Extraer metadata musical usando el mismo audio cargado
+        metadata = self._extract_audio_metadata_from_audio(audio, sr, audio_path)
         print(f"[PREDICT] Metadata extraída: {metadata}")
 
         if not self.is_trained:
-            # Cargar audio para análisis de IA (16kHz, necesario para fakeprint)
-            print("[PREDICT] Cargando audio para análisis de IA (16kHz)...")
-            audio = self.analyzer.load_audio(audio_path)
+            # Usar el audio ya cargado para análisis de IA (ahorra memoria)
             print("[PREDICT] Ejecutando análisis heurístico...")
             result = self._predict_heuristic_with_audio(audio, audio_path)
             # Agregar metadata
             result.update(metadata)
+            # Liberar memoria del audio inmediatamente
+            del audio
+            gc.collect()
             print(f"[PREDICT] Resultado final: {result}")
             return result
 
@@ -125,6 +128,10 @@ class AIDetector:
 
         # Agregar metadata musical
         result.update(metadata)
+
+        # Liberar memoria del audio inmediatamente
+        del audio
+        gc.collect()
 
         return result
 
@@ -371,8 +378,12 @@ class AIDetector:
         Returns:
             dict con resultados detallados
         """
-        fakeprint = self.analyzer.compute_fakeprint(audio)
-        extra_features = self.analyzer.extract_additional_features(audio)
+        # OPTIMIZACIÓN: Calcular fakeprint y obtener espectrograma para reutilizar
+        fakeprint, spec = self.analyzer.compute_fakeprint(audio, return_spectrogram=True)
+        # Reutilizar espectrograma para evitar recálculo de STFT
+        extra_features = self.analyzer.extract_additional_features(audio, spectrogram=spec)
+        # Liberar espectrograma de memoria inmediatamente
+        del spec
         return self._compute_heuristic_prediction(fakeprint, extra_features)
 
     def _predict_heuristic(self, audio_path):
