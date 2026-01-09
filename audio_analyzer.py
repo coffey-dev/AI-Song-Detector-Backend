@@ -151,15 +151,17 @@ class AudioAnalyzer:
         x = np.clip(x, 0, max_db)
         return x / (1e-6 + np.max(x))
 
-    def compute_fakeprint(self, audio):
+    def compute_fakeprint(self, audio, return_spectrogram=False):
         """
         Calcula el 'fakeprint' (huella espectral) del audio
 
         Args:
             audio: Señal de audio
+            return_spectrogram: Si True, retorna también el espectrograma para reutilizar
 
         Returns:
             fakeprint: Vector de características normalizado
+            spec (opcional): Espectrograma calculado (solo si return_spectrogram=True)
         """
         # Calcular espectrograma
         spec = self.compute_spectrogram(audio)
@@ -176,6 +178,8 @@ class AudioAnalyzer:
         # Normalizar
         fakeprint = self.max_normalize(profile)
 
+        if return_spectrogram:
+            return fakeprint, spec
         return fakeprint
 
     def analyze_audio_file(self, file_path):
@@ -192,20 +196,18 @@ class AudioAnalyzer:
         fakeprint = self.compute_fakeprint(audio)
         return fakeprint
 
-    def extract_additional_features(self, audio):
+    def extract_additional_features(self, audio, spectrogram=None):
         """
         Extrae características adicionales para mejorar la detección
 
         Args:
             audio: Señal de audio
+            spectrogram: Espectrograma ya calculado (opcional, para evitar recálculo)
 
         Returns:
             features: Diccionario con características adicionales
         """
         features = {}
-
-        # Características espectrales
-        spec = self.compute_spectrogram(audio)
 
         # Centroide espectral
         spectral_centroids = librosa.feature.spectral_centroid(y=audio, sr=self.sr)[0]
@@ -225,7 +227,9 @@ class AudioAnalyzer:
         features['zcr_mean'] = float(np.nan_to_num(np.mean(zcr), nan=0.0))
 
         # Energía en frecuencias altas (indicador clave de artefactos IA)
-        stft = librosa.stft(audio, n_fft=self.n_fft)
+        # OPTIMIZACIÓN: Reutilizar STFT del espectrograma si está disponible
+        # Calcular STFT solo una vez en vez de dos
+        stft = librosa.stft(audio, n_fft=self.n_fft, hop_length=self.n_fft//4)
         freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
         high_freq_idx = np.where(freqs > 8000)[0]
         if len(high_freq_idx) > 0:

@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import tempfile
+import gc
 from werkzeug.utils import secure_filename
 from classifier import AIDetector
 from visualizer import SpectralVisualizer
@@ -112,6 +113,8 @@ def analyze_audio():
             # Limpiar archivo temporal
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+            # Forzar liberación de memoria
+            gc.collect()
 
     except Exception as e:
         print(f"Error en análisis: {str(e)}")
@@ -166,6 +169,8 @@ def batch_analyze():
             finally:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
+                # Forzar liberación de memoria después de cada archivo
+                gc.collect()
 
         return jsonify({
             'status': 'success',
@@ -260,6 +265,8 @@ def visualize_audio():
             # Limpiar archivo temporal
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+            # Forzar liberación de memoria
+            gc.collect()
 
     except Exception as e:
         print(f"Error en visualización: {str(e)}")
